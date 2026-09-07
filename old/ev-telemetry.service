@@ -1,0 +1,21 @@
+[Unit]
+Description=EV Telemetry FastAPI and LoRa Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/code/prj
+ExecStart=/home/pi/code/prj/.venv/bin/python main.py
+Restart=always
+RestartSec=5s
+Environment=PYTHONUNBUFFERED=1
+Environment=USE_SIMULATED_HARDWARE=False
+
+# Sandboxing & Resource constraints suitable for Raspberry Pi 3B
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ev-telemetry
+
+[Install]
+WantedBy=multi-user.target
