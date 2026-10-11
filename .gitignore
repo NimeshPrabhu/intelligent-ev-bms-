@@ -1,4 +1,8 @@
 .venv/
-__py*
+__pycache__/
+*.pyc
 cleaned_dataset/
-test/__py*
+*.db
+*.db-wal
+*.db-shm
+.env

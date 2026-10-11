@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EV Telemetry Dashboard</title>
+  <title>Intelligent EV Battery Management System</title>
+  <meta name="description" content="Real-time EV BMS Telemetry Dashboard with ML State Estimation and Safety Relay Cutoff" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     /* ================= shadcn/ui Zinc Dark Theme ================= */
@@ -19,18 +20,19 @@
       --accent-primary: #38bdf8;
       --accent-teal: #14b8a6;
       --accent-violet: #a855f7;
+      --accent-amber: #f59e0b;
       
       /* Status / Alert Colors */
-      --success-bg: rgba(22, 101, 52, 0.18);
-      --success-border: rgba(34, 197, 94, 0.35);
+      --success-bg: rgba(22, 101, 52, 0.22);
+      --success-border: rgba(34, 197, 94, 0.4);
       --success-text: #4ade80;
       
-      --warning-bg: rgba(154, 52, 18, 0.22);
+      --warning-bg: rgba(154, 52, 18, 0.25);
       --warning-border: rgba(249, 115, 22, 0.45);
       --warning-text: #fb923c;
       
-      --destructive-bg: rgba(153, 27, 27, 0.22);
-      --destructive-border: rgba(239, 68, 68, 0.45);
+      --destructive-bg: rgba(153, 27, 27, 0.3);
+      --destructive-border: rgba(239, 68, 68, 0.55);
       --destructive-text: #f87171;
     }
 
@@ -45,7 +47,7 @@
     body {
       background-color: var(--background);
       color: var(--foreground);
-      padding: 20px 28px;
+      padding: 16px 24px;
       min-height: 100vh;
       line-height: 1.5;
     }
@@ -58,6 +60,8 @@
       margin-bottom: 16px;
       padding-bottom: 14px;
       border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+      gap: 12px;
     }
 
     .header-left {
@@ -70,37 +74,43 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 34px;
-      height: 34px;
+      width: 36px;
+      height: 36px;
       border-radius: 8px;
       background: #27272a;
-      color: #fafafa;
+      color: var(--accent-primary);
       border: 1px solid #3f3f46;
     }
 
-    .header-left h1 {
-      font-size: 1.15rem;
+    .header-title-block h1 {
+      font-size: 1.18rem;
       font-weight: 600;
       letter-spacing: -0.02em;
       color: var(--foreground);
     }
 
+    .header-title-block p {
+      font-size: 0.74rem;
+      color: var(--muted-foreground);
+    }
+
     .header-right {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
+      flex-wrap: wrap;
     }
 
     .badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      font-size: 0.75rem;
+      font-size: 0.74rem;
       font-weight: 500;
       padding: 4px 10px;
       border-radius: 6px;
       letter-spacing: -0.01em;
-      transition: all 0.3s ease;
+      transition: all 0.25s ease;
     }
 
     .badge-outline {
@@ -109,27 +119,67 @@
       color: var(--muted-foreground);
     }
 
-    .badge-status {
-      background: var(--success-bg);
-      border: 1px solid var(--success-border);
-      color: var(--success-text);
-    }
-
     .status-dot {
-      width: 6px;
-      height: 6px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
       background: currentColor;
     }
 
-    /* ================= shadcn/ui Alert Component ================= */
+    .status-dot.pulse {
+      animation: pulseDot 1.5s infinite;
+    }
+
+    @keyframes pulseDot {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.3); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-estop {
+      background: #dc2626;
+      color: #ffffff;
+      border-color: #ef4444;
+      box-shadow: 0 0 10px rgba(220, 38, 38, 0.4);
+    }
+
+    .btn-estop:hover {
+      background: #b91c1c;
+      box-shadow: 0 0 16px rgba(239, 68, 68, 0.6);
+    }
+
+    .btn-reset {
+      background: #16a34a;
+      color: #ffffff;
+      border-color: #22c55e;
+    }
+
+    .btn-reset:hover {
+      background: #15803d;
+    }
+
+    /* Alert Banner */
     .alert-banner {
       display: flex;
       align-items: flex-start;
       gap: 12px;
       padding: 12px 16px;
       border-radius: 8px;
-      margin-bottom: 20px;
+      margin-bottom: 18px;
       border: 1px solid var(--border);
       background: var(--card);
       transition: all 0.3s ease;
@@ -155,69 +205,52 @@
 
     @keyframes alertGlow {
       0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2); }
-      50% { box-shadow: 0 0 12px 2px rgba(239, 68, 68, 0.25); }
+      50% { box-shadow: 0 0 12px 2px rgba(239, 68, 68, 0.3); }
     }
 
-    .alert-icon {
-      flex-shrink: 0;
-      margin-top: 2px;
+    .alert-icon { flex-shrink: 0; margin-top: 2px; }
+    .alert-content { flex: 1; }
+    .alert-title { font-size: 0.84rem; font-weight: 600; margin-bottom: 2px; }
+    .alert-desc { font-size: 0.76rem; color: var(--muted-foreground); line-height: 1.4; }
+
+    /* Instrument Cards Grid */
+    .grid-instruments {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
     }
 
-    .alert-content {
-      flex: 1;
+    @media (min-width: 1024px) {
+      .grid-instruments {
+        grid-template-columns: repeat(7, 1fr);
+      }
     }
 
-    .alert-title {
-      font-size: 0.82rem;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-      margin-bottom: 2px;
+    @media (max-width: 900px) {
+      .grid-instruments {
+        grid-template-columns: repeat(3, 1fr);
+      }
     }
 
-    .alert-desc {
-      font-size: 0.76rem;
-      color: var(--muted-foreground);
-      line-height: 1.4;
+    @media (max-width: 600px) {
+      .grid-instruments {
+        grid-template-columns: 1fr 1fr;
+      }
     }
-
-    /* ================= shadcn Card Grid ================= */
-.grid-instruments {
-  display: grid;
-  /* Auto‑fit cards up to a minimum of 150 px; expand to fill the row */
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 14px;
-  margin-bottom: 20px;
-}
-
-/* Make the Pack Telemetry card span two columns on wider screens */
-@media (min-width: 800px) {
-  .card-telemetry {
-    grid-column: span 2;
-  }
-}
-
-@media (max-width: 1100px) {
-  .grid-instruments {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-@media (max-width: 680px) {
-  .grid-instruments {
-    grid-template-columns: 1fr 1fr;
-  }
-}
 
     .card {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 14px;
+      padding: 14px 12px;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       position: relative;
       transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      min-height: 160px;
     }
 
     .card:hover {
@@ -226,56 +259,53 @@
 
     .card-label {
       font-size: 0.72rem;
-      font-weight: 500;
+      font-weight: 600;
       color: var(--muted-foreground);
-      letter-spacing: -0.01em;
-      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 8px;
       width: 100%;
       text-align: left;
     }
 
     /* 150px SVG Speedometer */
     .speedo-container {
-      width: 150px;
-      height: 150px;
+      width: 120px;
+      height: 120px;
       position: relative;
       display: flex;
       align-items: center;
       justify-content: center;
     }
 
-    .speedo-svg {
-      width: 150px;
-      height: 150px;
-    }
+    .speedo-svg { width: 120px; height: 120px; }
 
     .speedo-text {
       position: absolute;
       text-align: center;
-      bottom: 26px;
+      bottom: 18px;
       pointer-events: none;
     }
 
     .speedo-val {
-      font-size: 1.7rem;
+      font-size: 1.55rem;
       font-weight: 700;
-      letter-spacing: -0.03em;
       line-height: 1;
       color: var(--foreground);
     }
 
     .speedo-sub {
-      font-size: 0.62rem;
+      font-size: 0.58rem;
       font-weight: 600;
       color: var(--muted);
       letter-spacing: 0.05em;
       margin-top: 2px;
     }
 
-    /* Circular Gauges (SOC & SOH) */
+    /* Circular Gauges */
     .gauge-wrap {
-      width: 125px;
-      height: 125px;
+      width: 105px;
+      height: 105px;
       position: relative;
       display: flex;
       align-items: center;
@@ -283,35 +313,24 @@
     }
 
     .gauge-svg {
-      width: 125px;
-      height: 125px;
+      width: 105px;
+      height: 105px;
       transform: rotate(-90deg);
     }
 
     .gauge-track {
       fill: none;
       stroke: var(--border-subtle);
-      stroke-width: 8;
+      stroke-width: 7;
     }
 
-    .gauge-fill-soc {
+    .gauge-fill {
       fill: none;
-      stroke: var(--accent-teal);
-      stroke-width: 8;
+      stroke-width: 7;
       stroke-linecap: round;
-      stroke-dasharray: 333;
+      stroke-dasharray: 283;
       stroke-dashoffset: 40;
-      transition: stroke-dashoffset 0.5s ease, stroke 0.3s ease;
-    }
-
-    .gauge-fill-soh {
-      fill: none;
-      stroke: var(--accent-violet);
-      stroke-width: 8;
-      stroke-linecap: round;
-      stroke-dasharray: 333;
-      stroke-dashoffset: 40;
-      transition: stroke-dashoffset 0.5s ease;
+      transition: stroke-dashoffset 0.4s ease, stroke 0.3s ease;
     }
 
     .gauge-center-text {
@@ -320,14 +339,13 @@
     }
 
     .gauge-val {
-      font-size: 1.45rem;
+      font-size: 1.35rem;
       font-weight: 700;
-      letter-spacing: -0.02em;
       color: var(--foreground);
     }
 
     .gauge-desc {
-      font-size: 0.62rem;
+      font-size: 0.60rem;
       color: var(--muted);
       font-weight: 500;
     }
@@ -336,83 +354,78 @@
     .card-metric {
       align-items: flex-start;
       justify-content: space-between;
-      padding: 16px;
+      padding: 14px 16px;
     }
 
     .metric-hero {
       display: flex;
       align-items: baseline;
-      gap: 6px;
-      margin: 6px 0;
+      gap: 4px;
+      margin: 4px 0;
     }
 
     .metric-val-large {
-      font-size: 2.1rem;
+      font-size: 1.75rem;
       font-weight: 700;
-      letter-spacing: -0.03em;
       line-height: 1;
       color: var(--foreground);
     }
 
     .metric-unit-tag {
-      font-size: 0.85rem;
+      font-size: 0.80rem;
       font-weight: 500;
       color: var(--muted-foreground);
     }
 
     .metric-footer {
-      font-size: 0.72rem;
+      font-size: 0.70rem;
       color: var(--muted);
       display: flex;
-      gap: 12px;
-    }
-
-    /* Telemetry Sub-grid */
-    .telemetry-row {
-      display: flex;
+      flex-direction: column;
+      gap: 2px;
       width: 100%;
-      justify-content: space-between;
-      gap: 8px;
-      margin-top: 4px;
     }
 
-    .telemetry-col {
-      flex: 1;
-    }
-
-    .telemetry-col .col-label {
-      font-size: 0.65rem;
-      color: var(--muted);
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-
-    .telemetry-col .col-val {
-      font-size: 1.15rem;
+    .relay-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.72rem;
       font-weight: 600;
-      letter-spacing: -0.01em;
-      margin-top: 2px;
+      margin-top: 6px;
     }
 
-    /* ================= Charts Section ================= */
+    .relay-closed {
+      background: var(--success-bg);
+      border: 1px solid var(--success-border);
+      color: var(--success-text);
+    }
+
+    .relay-tripped {
+      background: var(--destructive-bg);
+      border: 1px solid var(--destructive-border);
+      color: var(--destructive-text);
+    }
+
+    /* Charts Section */
     .grid-charts {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 14px;
+      margin-bottom: 20px;
     }
 
     @media (max-width: 900px) {
-      .grid-charts {
-        grid-template-columns: 1fr;
-      }
+      .grid-charts { grid-template-columns: 1fr; }
     }
 
     .card-chart {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 16px 18px;
+      padding: 14px 16px;
     }
 
     .chart-header {
@@ -420,38 +433,114 @@
       justify-content: space-between;
       align-items: center;
       margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
     }
 
     .chart-title {
       font-size: 0.82rem;
       font-weight: 600;
-      letter-spacing: -0.01em;
       color: var(--foreground);
     }
 
-    .chart-legend {
+    .chart-controls {
       display: flex;
-      gap: 12px;
-      font-size: 0.72rem;
-    }
-
-    .legend-item {
-      display: inline-flex;
       align-items: center;
-      gap: 6px;
-      color: var(--muted-foreground);
+      gap: 8px;
     }
 
-    .legend-pill {
-      width: 12px;
-      height: 3px;
-      border-radius: 1px;
+    .btn-pill-group {
+      display: inline-flex;
+      background: #121215;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px;
+    }
+
+    .btn-pill {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-pill.active {
+      background: #27272a;
+      color: var(--foreground);
     }
 
     .chart-box {
       position: relative;
-      height: 220px;
+      height: 210px;
       width: 100%;
+    }
+
+    /* Fault Event Log Table */
+    .card-table {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .table-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .table-responsive {
+      overflow-x: auto;
+      max-height: 180px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.74rem;
+      text-align: left;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 500;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      text-transform: uppercase;
+      font-size: 0.66rem;
+      letter-spacing: 0.04em;
+    }
+
+    td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--foreground);
+    }
+
+    .badge-critical {
+      background: var(--destructive-bg);
+      border: 1px solid var(--destructive-border);
+      color: var(--destructive-text);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.68rem;
+      font-weight: 600;
+    }
+
+    .badge-warning {
+      background: var(--warning-bg);
+      border: 1px solid var(--warning-border);
+      color: var(--warning-text);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.68rem;
+      font-weight: 600;
     }
   </style>
 </head>
@@ -461,53 +550,63 @@
   <header>
     <div class="header-left">
       <div class="brand-icon">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
         </svg>
       </div>
-      <h1>EV Telemetry Dashboard</h1>
+      <div class="header-title-block">
+        <h1>Intelligent EV BMS Dashboard</h1>
+        <p>Telemetry Stream • TFLite LSTM SOH • Local Hardware Relay Protection</p>
+      </div>
     </div>
     <div class="header-right">
       <div class="badge badge-outline">
+        <span id="seqCounter">Seq: #0</span>
+      </div>
+      <div class="badge badge-outline">
         <span id="syncTime">Sync: --:--:--</span>
       </div>
-      <div id="statusBadge" class="badge badge-status">
-        <div id="statusDot" class="status-dot"></div>
-        <span id="statusText">CONNECTING</span>
+      <div id="sourceBadge" class="badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8;">
+        <div id="sourceDot" class="status-dot"></div>
+        <span id="sourceText">CONNECTING</span>
       </div>
+      <button id="btnRelayControl" class="btn btn-estop" onclick="handleRelayAction()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span id="btnRelayLabel">E-STOP</span>
+      </button>
     </div>
   </header>
 
-  <!-- shadcn/ui Battery Safety & Fault Warning Alert Banner -->
+  <!-- Battery Safety Alert Banner -->
   <div id="faultAlertBanner" class="alert-banner normal">
     <div id="faultAlertIcon" class="alert-icon">
-      <!-- Success / Nominal Check Icon -->
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
         <polyline points="22 4 12 14.01 9 11.01"></polyline>
       </svg>
     </div>
     <div class="alert-content">
-      <div id="faultAlertTitle" class="alert-title">Battery Safety: System Nominal</div>
-      <div id="faultAlertDesc" class="alert-desc">All electrical thresholds normal for 3S 11.1V (2500mAh) pack. Voltage, current, and temperature within safe limits.</div>
+      <div id="faultAlertTitle" class="alert-title">Battery Safety: Nominal</div>
+      <div id="faultAlertDesc" class="alert-desc">All parameters within safety thresholds. Relay energized.</div>
     </div>
   </div>
 
-  <!-- Top Row: Instrument Cards -->
+  <!-- Instrument Cards Row -->
   <div class="grid-instruments">
 
-    <!-- 1. Compact 150px SVG Speedometer -->
+    <!-- 1. Speedometer -->
     <div class="card">
-      <span class="card-label">Vehicle Speed</span>
+      <span class="card-label">Speed</span>
       <div class="speedo-container">
         <svg class="speedo-svg" viewBox="0 0 150 150">
-          <!-- Background track -->
-          <circle cx="75" cy="75" r="58" fill="none" stroke="#27272a" stroke-width="7" stroke-dasharray="270" stroke-dashoffset="68" stroke-linecap="round" transform="rotate(135 75 75)"/>
-          <!-- Active colored arc -->
-          <circle id="speedoArc" cx="75" cy="75" r="58" fill="none" stroke="#38bdf8" stroke-width="7" stroke-dasharray="270" stroke-dashoffset="270" stroke-linecap="round" transform="rotate(135 75 75)" style="transition: stroke-dashoffset 0.4s ease;"/>
-          <!-- Minimalist needle -->
-          <line id="speedoNeedle" x1="75" y1="75" x2="75" y2="28" stroke="#fafafa" stroke-width="3" stroke-linecap="round" transform="rotate(-135 75 75)" style="transition: transform 0.4s cubic-bezier(0.1, 0.9, 0.2, 1);"/>
-          <circle cx="75" cy="75" r="4" fill="#fafafa"/>
+          <circle cx="75" cy="75" r="54" fill="none" stroke="#27272a" stroke-width="6" stroke-dasharray="254" stroke-dashoffset="64" stroke-linecap="round" transform="rotate(135 75 75)"/>
+          <circle id="speedoArc" cx="75" cy="75" r="54" fill="none" stroke="#38bdf8" stroke-width="6" stroke-dasharray="254" stroke-dashoffset="254" stroke-linecap="round" transform="rotate(135 75 75)" style="transition: stroke-dashoffset 0.35s ease;"/>
+          <line id="speedoNeedle" x1="75" y1="75" x2="75" y2="30" stroke="#fafafa" stroke-width="2.5" stroke-linecap="round" transform="rotate(-135 75 75)" style="transition: transform 0.35s ease;"/>
+          <circle cx="75" cy="75" r="3.5" fill="#fafafa"/>
         </svg>
         <div class="speedo-text">
           <div id="speedVal" class="speedo-val">0</div>
@@ -516,72 +615,110 @@
       </div>
     </div>
 
-    <!-- 2. SOC Circular Progress Ring -->
+    <!-- 2. State of Charge (SOC) -->
     <div class="card">
       <span class="card-label">State of Charge</span>
       <div class="gauge-wrap">
-        <svg class="gauge-svg" viewBox="0 0 125 125">
-          <circle cx="62.5" cy="62.5" r="53" class="gauge-track"/>
-          <circle id="socRing" cx="62.5" cy="62.5" r="53" class="gauge-fill-soc"/>
+        <svg class="gauge-svg" viewBox="0 0 105 105">
+          <circle cx="52.5" cy="52.5" r="45" class="gauge-track"/>
+          <circle id="socRing" cx="52.5" cy="52.5" r="45" class="gauge-fill" stroke="var(--accent-teal)"/>
         </svg>
         <div class="gauge-center-text">
           <div id="socVal" class="gauge-val">--%</div>
-          <div class="gauge-desc">SOC (EST)</div>
+          <div class="gauge-desc">COULOMB + OCV</div>
         </div>
       </div>
     </div>
 
-    <!-- 3. SOH Health Arc Gauge -->
+    <!-- 3. State of Health (SOH) -->
     <div class="card">
       <span class="card-label">State of Health</span>
       <div class="gauge-wrap">
-        <svg class="gauge-svg" viewBox="0 0 125 125">
-          <circle cx="62.5" cy="62.5" r="53" class="gauge-track"/>
-          <circle id="sohRing" cx="62.5" cy="62.5" r="53" class="gauge-fill-soh"/>
+        <svg class="gauge-svg" viewBox="0 0 105 105">
+          <circle cx="52.5" cy="52.5" r="45" class="gauge-track"/>
+          <circle id="sohRing" cx="52.5" cy="52.5" r="45" class="gauge-fill" stroke="var(--accent-violet)"/>
         </svg>
         <div class="gauge-center-text">
           <div id="sohVal" class="gauge-val" style="color: var(--accent-violet);">--%</div>
-          <div class="gauge-desc">TFLite LSTM</div>
+          <div id="sohBadge" class="gauge-desc">TFLITE LSTM</div>
         </div>
       </div>
     </div>
 
-
-    <!-- 5. Electrical Telemetry Card (INA219 & DS18B20) -->
+    <!-- 4. Instantaneous Power (W) -->
     <div class="card card-metric">
-      <span class="card-label">Pack Telemetry</span>
-      <div class="telemetry-row">
-        <div class="telemetry-col">
-          <div class="col-label">Voltage</div>
-          <div id="voltageVal" class="col-val" style="color: #60a5fa;">-- V</div>
+      <span class="card-label">Live Power</span>
+      <div class="metric-hero">
+        <span id="powerVal" class="metric-val-large" style="color: #38bdf8;">0.0</span>
+        <span class="metric-unit-tag">W</span>
+      </div>
+      <div class="metric-footer">
+        <span id="powerModeText" style="color: var(--accent-amber);">Discharge Draw</span>
+        <span id="powerPeakText">P = V × I</span>
+      </div>
+    </div>
+
+    <!-- 5. Relay & Safety State -->
+    <div class="card card-metric">
+      <span class="card-label">Relay Cutoff</span>
+      <div id="relayStatusBadge" class="relay-badge relay-closed">
+        <div class="status-dot"></div>
+        <span id="relayStatusText">CLOSED (POWER ON)</span>
+      </div>
+      <div class="metric-footer" style="margin-top: 10px;">
+        <span id="l298nStatus">L298N: Ready</span>
+        <span>Pin: GPIO 13</span>
+      </div>
+    </div>
+
+    <!-- 6. Pack Telemetry (INA219 + DS18B20) -->
+    <div class="card card-metric">
+      <span class="card-label">Pack Metrics</span>
+      <div style="width: 100%; display: flex; flex-direction: column; gap: 4px;">
+        <div style="display: flex; justify-content: space-between; font-size: 0.74rem;">
+          <span style="color: var(--muted);">Voltage:</span>
+          <span id="voltageVal" style="font-weight: 600; color: #60a5fa;">-- V</span>
         </div>
-        <div class="telemetry-col">
-          <div class="col-label">Current</div>
-          <div id="currentVal" class="col-val" style="color: #f59e0b;">-- A</div>
+        <div style="display: flex; justify-content: space-between; font-size: 0.74rem;">
+          <span style="color: var(--muted);">Current:</span>
+          <span id="currentVal" style="font-weight: 600; color: #f59e0b;">-- A</span>
         </div>
-        <div class="telemetry-col">
-          <div class="col-label">Temp</div>
-          <div id="tempVal" class="col-val" style="color: #34d399;">-- °C</div>
+        <div style="display: flex; justify-content: space-between; font-size: 0.74rem;">
+          <span style="color: var(--muted);">Temp:</span>
+          <span id="tempVal" style="font-weight: 600; color: #34d399;">-- °C</span>
         </div>
       </div>
       <div class="metric-footer" style="margin-top: 6px;">
-        <span id="powerVal">Power: 0.0 W</span>
         <span id="cellAvgVal">Cell Avg: -- V</span>
+      </div>
+    </div>
+
+    <!-- 7. Estimated Range -->
+    <div class="card card-metric">
+      <span class="card-label">Remaining Range</span>
+      <div class="metric-hero">
+        <span id="rangeVal" class="metric-val-large">--</span>
+        <span class="metric-unit-tag">KM</span>
+      </div>
+      <div class="metric-footer">
+        <span id="usableWhVal">Usable: -- Wh</span>
+        <span>@ 22 Wh/km</span>
       </div>
     </div>
 
   </div>
 
-  <!-- Bottom Section: Responsive Charts -->
+  <!-- Charts Row -->
   <div class="grid-charts">
-    <!-- Chart 1: Speed Over Time -->
+    <!-- Chart 1: Speed History -->
     <div class="card-chart">
       <div class="chart-header">
-        <span class="chart-title">Speed History</span>
-        <div class="chart-legend">
-          <div class="legend-item">
-            <div class="legend-pill" style="background: #38bdf8;"></div>
-            <span>Speed (km/h)</span>
+        <span class="chart-title">Vehicle Speed History</span>
+        <div class="chart-controls">
+          <div class="btn-pill-group">
+            <button class="btn-pill active" onclick="setChartRange(40, this)">Live</button>
+            <button class="btn-pill" onclick="setChartRange(300, this)">5m</button>
+            <button class="btn-pill" onclick="setChartRange(900, this)">15m</button>
           </div>
         </div>
       </div>
@@ -594,14 +731,10 @@
     <div class="card-chart">
       <div class="chart-header">
         <span class="chart-title">SOC vs SOH — Live Comparison</span>
-        <div class="chart-legend">
-          <div class="legend-item">
-            <div class="legend-pill" style="background: var(--accent-teal);"></div>
-            <span style="color: var(--accent-teal);">SOC (%)</span>
-          </div>
-          <div class="legend-item">
-            <div class="legend-pill" style="background: var(--accent-violet); border-top: 2px dashed var(--accent-violet); height: 0;"></div>
-            <span style="color: var(--accent-violet);">SOH (%)</span>
+        <div class="chart-controls">
+          <div style="display: flex; gap: 10px; font-size: 0.72rem;">
+            <span style="color: var(--accent-teal);">● SOC</span>
+            <span style="color: var(--accent-violet);">-- SOH (LSTM)</span>
           </div>
         </div>
       </div>
@@ -611,23 +744,53 @@
     </div>
   </div>
 
+  <!-- Real-time Fault Event Log Table -->
+  <div class="card-table">
+    <div class="table-header">
+      <span class="chart-title">Safety Alarm & Fault Event Audit Log</span>
+      <span style="font-size: 0.72rem; color: var(--muted);">Auto-refreshed from SQLite</span>
+    </div>
+    <div class="table-responsive">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Fault Type</th>
+            <th>Severity</th>
+            <th>Value</th>
+            <th>Threshold Limit</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody id="faultTableBody">
+          <tr>
+            <td colspan="6" style="text-align: center; color: var(--muted);">No fault alarms recorded. System operating safely.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <script>
-    // ================= State & Data Buffer =================
-    const MAX_POINTS = 40;
+    // ================= State & Configuration =================
+    const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 45; // ~282.74 for r=45
+    let currentRelayState = 1;
+    let activeTimeRange = 40; // Default live sliding window
     const timeLabels = [];
     const speedData = [];
     const socData = [];
     const sohData = [];
 
-    // Global Chart.js configuration for shadcn zinc dark styling
+    // Chart.js Performance Optimizations for Raspberry Pi 3B+
     Chart.defaults.color = '#71717a';
-    Chart.defaults.font.size = 11;
-    Chart.defaults.borderColor = '#27272a';
+    Chart.defaults.font.size = 10;
+    Chart.defaults.borderColor = '#1f1f23';
+    Chart.defaults.animation = false; // Disable complex animations for low CPU load
 
-    // 1. Speed History Chart
+    // 1. Speed Chart
     const speedCtx = document.getElementById('speedChart').getContext('2d');
-    const speedGrad = speedCtx.createLinearGradient(0, 0, 0, 200);
-    speedGrad.addColorStop(0, 'rgba(56, 189, 248, 0.22)');
+    const speedGrad = speedCtx.createLinearGradient(0, 0, 0, 180);
+    speedGrad.addColorStop(0, 'rgba(56, 189, 248, 0.20)');
     speedGrad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
 
     const speedChart = new Chart(speedCtx, {
@@ -640,9 +803,8 @@
           borderWidth: 2,
           backgroundColor: speedGrad,
           fill: true,
-          tension: 0.3,
-          pointRadius: 0,
-          pointHoverRadius: 4
+          tension: 0.2,
+          pointRadius: 0
         }]
       },
       options: {
@@ -650,14 +812,22 @@
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
-          x: { grid: { display: false } },
-          y: { min: 0, suggestedMax: 45, grid: { color: '#1f1f23' } }
-        },
-        animation: { duration: 250 }
+          x: {
+            grid: { display: false },
+            ticks: {
+              maxTicksLimit: 6,
+              autoSkip: true,
+              maxRotation: 0,
+              color: '#71717a',
+              font: { size: 10 }
+            }
+          },
+          y: { min: 0, suggestedMax: 50, grid: { color: '#1a1a1e' } }
+        }
       }
     });
 
-    // 2. SOC vs SOH Live Comparison Chart
+    // 2. SOC vs SOH Chart
     const socSohCtx = document.getElementById('socSohChart').getContext('2d');
     const socSohChart = new Chart(socSohCtx, {
       type: 'line',
@@ -667,23 +837,21 @@
           {
             label: 'SOC',
             data: socData,
-            borderColor: '#14b8a6', // Teal solid line
+            borderColor: '#14b8a6',
             borderWidth: 2.2,
             fill: false,
-            tension: 0.2,
-            pointRadius: 0,
-            pointHoverRadius: 4
+            tension: 0.15,
+            pointRadius: 0
           },
           {
             label: 'SOH',
             data: sohData,
-            borderColor: '#a855f7', // Violet dashed line
+            borderColor: '#a855f7',
             borderWidth: 2.2,
             borderDash: [5, 4],
             fill: false,
-            tension: 0.15,
-            pointRadius: 0,
-            pointHoverRadius: 4
+            tension: 0.1,
+            pointRadius: 0
           }
         ]
       },
@@ -692,205 +860,325 @@
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
-          x: { grid: { display: false } },
-          y: { min: 40, max: 100, ticks: { stepSize: 10 }, grid: { color: '#1f1f23' } }
-        },
-        animation: { duration: 250 }
+          x: {
+            grid: { display: false },
+            ticks: {
+              maxTicksLimit: 6,
+              autoSkip: true,
+              maxRotation: 0,
+              color: '#71717a',
+              font: { size: 10 }
+            }
+          },
+          y: { min: 40, max: 100, ticks: { stepSize: 10 }, grid: { color: '#1a1a1e' } }
+        }
       }
     });
 
-    // ================= DOM References =================
-    const speedoNeedle = document.getElementById('speedoNeedle');
-    const speedoArc = document.getElementById('speedoArc');
+
+    // DOM Elements
     const speedVal = document.getElementById('speedVal');
-    const socRing = document.getElementById('socRing');
+    const speedoArc = document.getElementById('speedoArc');
+    const speedoNeedle = document.getElementById('speedoNeedle');
     const socVal = document.getElementById('socVal');
-    const sohRing = document.getElementById('sohRing');
+    const socRing = document.getElementById('socRing');
     const sohVal = document.getElementById('sohVal');
-    const rangeVal = document.getElementById('rangeVal');
+    const sohRing = document.getElementById('sohRing');
+    const powerVal = document.getElementById('powerVal');
+    const powerModeText = document.getElementById('powerModeText');
     const voltageVal = document.getElementById('voltageVal');
     const currentVal = document.getElementById('currentVal');
     const tempVal = document.getElementById('tempVal');
-    const powerVal = document.getElementById('powerVal');
     const cellAvgVal = document.getElementById('cellAvgVal');
+    const rangeVal = document.getElementById('rangeVal');
+    const usableWhVal = document.getElementById('usableWhVal');
+    const relayStatusBadge = document.getElementById('relayStatusBadge');
+    const relayStatusText = document.getElementById('relayStatusText');
+    const btnRelayControl = document.getElementById('btnRelayControl');
+    const btnRelayLabel = document.getElementById('btnRelayLabel');
+    const sourceBadge = document.getElementById('sourceBadge');
+    const sourceText = document.getElementById('sourceText');
+    const sourceDot = document.getElementById('sourceDot');
+    const seqCounter = document.getElementById('seqCounter');
     const syncTime = document.getElementById('syncTime');
-    const statusBadge = document.getElementById('statusBadge');
-    const statusText = document.getElementById('statusText');
     const faultAlertBanner = document.getElementById('faultAlertBanner');
-    const faultAlertIcon = document.getElementById('faultAlertIcon');
     const faultAlertTitle = document.getElementById('faultAlertTitle');
     const faultAlertDesc = document.getElementById('faultAlertDesc');
 
-    // Circumference for r=53 circle is 2 * PI * 53 ~= 333.0
-    const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 53;
+    // ================= Telemetry Rendering =================
+    function updateDashboard(data) {
+      if (!data) return;
 
-    function renderFaultAlert(healthStatus, alerts) {
-      if (healthStatus === 'CRITICAL') {
-        faultAlertBanner.className = 'alert-banner critical';
-        faultAlertIcon.innerHTML = `
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="12" y1="8" x2="12" y2="12"></line>
-            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-          </svg>`;
-        faultAlertTitle.textContent = 'Critical Fault Detected: Immediate Action Required';
-        const msgs = (alerts || []).map(a => a.message).join(' | ');
-        faultAlertDesc.textContent = msgs || 'Battery parameter outside safe operating cutoff.';
-      } else if (healthStatus === 'WARNING') {
-        faultAlertBanner.className = 'alert-banner warning';
-        faultAlertIcon.innerHTML = `
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fb923c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path>
-            <line x1="12" y1="9" x2="12" y2="13"></line>
-            <line x1="12" y1="17" x2="12.01" y2="17"></line>
-          </svg>`;
-        faultAlertTitle.textContent = 'Early Warning: Battery Threshold Exceeded';
-        const msgs = (alerts || []).map(a => a.message).join(' | ');
-        faultAlertDesc.textContent = msgs || 'Operating close to safety margin.';
-      } else {
-        faultAlertBanner.className = 'alert-banner normal';
-        faultAlertIcon.innerHTML = `
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-            <polyline points="22 4 12 14.01 9 11.01"></polyline>
-          </svg>`;
-        faultAlertTitle.textContent = 'Battery Safety: System Nominal';
-        faultAlertDesc.textContent = 'All electrical thresholds normal for 3S 11.1V (2500mAh) pack. Voltage, current, and temperature within safe limits.';
-      }
-    }
-
-    function updateTelemetry(data) {
-      // 1. Speedometer (0 - 60 km/h mapped to -135deg to +135deg)
+      // 1. Speedometer (0 - 60 km/h)
       const spd = Math.max(0, Number(data.speed || 0));
       speedVal.textContent = Math.round(spd);
       const angle = -135 + (Math.min(spd, 60) / 60) * 270;
       speedoNeedle.setAttribute('transform', `rotate(${angle} 75 75)`);
-      const dashOffset = 270 - (Math.min(spd, 60) / 60) * 270;
+      const dashOffset = 254 - (Math.min(spd, 60) / 60) * 254;
       speedoArc.style.strokeDashoffset = dashOffset;
 
-      // 2. SOC (0 - 100%)
+      // 2. SOC (Coulomb counting)
       const soc = Math.max(0, Math.min(100, Number(data.soc || 0)));
       socVal.textContent = `${Math.round(soc)}%`;
       socRing.style.strokeDashoffset = GAUGE_CIRCUMFERENCE * (1 - soc / 100.0);
-      if (soc > 40) {
-        socRing.style.stroke = 'var(--accent-teal)';
-      } else if (soc > 20) {
-        socRing.style.stroke = 'var(--warning-text)';
-      } else {
-        socRing.style.stroke = 'var(--destructive-text)';
-      }
+      socRing.style.stroke = soc > 40 ? 'var(--accent-teal)' : (soc > 20 ? 'var(--accent-amber)' : 'var(--destructive-text)');
 
-      // 3. SOH (60 - 100%)
+      // 3. SOH (TFLite LSTM)
       const soh = Math.max(0, Math.min(100, Number(data.soh || 0)));
       sohVal.textContent = `${soh.toFixed(1)}%`;
       sohRing.style.strokeDashoffset = GAUGE_CIRCUMFERENCE * (1 - soh / 100.0);
 
-      // 4. Range
-      rangeVal.textContent = data.range_km ? Number(data.range_km).toFixed(1) : '--';
-
-      // 5. Electrical
+      // 4. Power & Electrical (Positive = Discharge, Negative = Charge)
       const v = Number(data.voltage || 0);
       const i = Number(data.current || 0);
-      const t = Number(data.temperature || 0);
+      const p = Math.abs(Number(data.power || (v * i)));
+      powerVal.textContent = p.toFixed(1);
+      if (i > 0.3) {
+        powerModeText.textContent = `Discharge Draw (${i.toFixed(1)}A)`;
+        powerModeText.style.color = 'var(--accent-amber)';
+      } else if (i < -0.3) {
+        powerModeText.textContent = `Regenerative Charge (${Math.abs(i).toFixed(1)}A)`;
+        powerModeText.style.color = '#34d399';
+      } else {
+        powerModeText.textContent = 'Idle Standby';
+        powerModeText.style.color = 'var(--muted)';
+      }
+
       voltageVal.textContent = `${v.toFixed(2)} V`;
       currentVal.textContent = `${i.toFixed(2)} A`;
-      tempVal.textContent = `${t.toFixed(1)} °C`;
+      tempVal.textContent = `${Number(data.temperature || 0).toFixed(1)} °C`;
+      cellAvgVal.textContent = `Cell Avg: ${(v / 3.0).toFixed(2)} V`;
 
-      const powerW = Math.abs(v * i);
-      powerVal.textContent = `Power: ${powerW.toFixed(1)} W ${i < 0 ? '(Draw)' : '(Charge)'}`;
-      cellAvgVal.textContent = `Cell: ${(v / 3.0).toFixed(2)} V`;
+      // 5. Range
+      rangeVal.textContent = data.range_km ? Number(data.range_km).toFixed(1) : '--';
+      usableWhVal.textContent = `Usable: ${(27.75 * (soh/100) * (soc/100)).toFixed(1)} Wh`;
 
-      // 6. Header Time
+      // 6. Relay & E-Stop Status
+      currentRelayState = Number(data.relay_state !== undefined ? data.relay_state : 1);
+      if (currentRelayState === 1) {
+        relayStatusBadge.className = 'relay-badge relay-closed';
+        relayStatusText.textContent = 'CLOSED (POWER ON)';
+        btnRelayControl.className = 'btn btn-estop';
+        btnRelayLabel.textContent = 'E-STOP';
+      } else {
+        relayStatusBadge.className = 'relay-badge relay-tripped';
+        relayStatusText.textContent = 'TRIPPED (SAFE CUTOFF)';
+        btnRelayControl.className = 'btn btn-reset';
+        btnRelayLabel.textContent = 'RESET RELAY';
+      }
+
+      // 7. Data Source & Stale Detection
+      seqCounter.textContent = `Seq: #${data.seq || 0}`;
       syncTime.textContent = `Sync: ${new Date().toLocaleTimeString()}`;
 
-      // 7. Fault Alerts
-      renderFaultAlert(data.health_status || 'NORMAL', data.alerts || []);
+      if (data.is_stale) {
+        sourceBadge.style.background = 'var(--warning-bg)';
+        sourceBadge.style.borderColor = 'var(--warning-border)';
+        sourceBadge.style.color = 'var(--warning-text)';
+        sourceText.textContent = 'STALE DATA';
+        sourceDot.className = 'status-dot pulse';
+      } else if (data.source === 'sim') {
+        sourceBadge.style.background = 'rgba(56, 189, 248, 0.15)';
+        sourceBadge.style.borderColor = 'rgba(56, 189, 248, 0.35)';
+        sourceBadge.style.color = '#38bdf8';
+        sourceText.textContent = 'SIMULATED';
+        sourceDot.className = 'status-dot';
+      } else {
+        sourceBadge.style.background = 'var(--success-bg)';
+        sourceBadge.style.borderColor = 'var(--success-border)';
+        sourceBadge.style.color = 'var(--success-text)';
+        sourceText.textContent = 'LIVE HARDWARE';
+        sourceDot.className = 'status-dot';
+      }
+
+      // 8. Safety Alert Banner
+      renderAlertBanner(data.health_status, data.alerts);
     }
 
-    function appendChartPoint(data) {
-      const timeStr = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : new Date().toLocaleTimeString();
+    function renderAlertBanner(status, alerts) {
+      if (status === 'CRITICAL') {
+        faultAlertBanner.className = 'alert-banner critical';
+        faultAlertTitle.textContent = 'CRITICAL FAULT DETECTED: Hardware Cutoff Engaged';
+        const msgs = (alerts || []).map(a => a.message).join(' | ');
+        faultAlertDesc.textContent = msgs || 'Battery parameter outside safe limits. Motor relay tripped.';
+      } else if (status === 'WARNING') {
+        faultAlertBanner.className = 'alert-banner warning';
+        faultAlertTitle.textContent = 'Early Warning: Approaching Threshold Margin';
+        const msgs = (alerts || []).map(a => a.message).join(' | ');
+        faultAlertDesc.textContent = msgs || 'Monitor battery load and thermal dissipation.';
+      } else {
+        faultAlertBanner.className = 'alert-banner normal';
+        faultAlertTitle.textContent = 'Battery Safety: Nominal';
+        faultAlertDesc.textContent = 'All parameters within safety thresholds for 3S 11.1V pack. Relay energized.';
+      }
+    }
 
-      if (timeLabels.length >= MAX_POINTS) {
-        timeLabels.shift();
+    function pushChartPoint(data) {
+      if (activeTimeRange !== 40) return; // In historical mode, don't append live points
+
+      speedData.push(Number(data.speed || 0));
+      socData.push(Number(data.soc || 0));
+      sohData.push(Number(data.soh || 0));
+
+      if (speedData.length > 40) {
         speedData.shift();
         socData.shift();
         sohData.shift();
       }
 
-      timeLabels.push(timeStr);
-      speedData.push(Number(data.speed || 0));
-      socData.push(Number(data.soc || 0));
-      sohData.push(Number(data.soh || 0));
+      // Generate clean, intuitive relative time labels (-30s ... Now)
+      timeLabels.length = 0;
+      const count = speedData.length;
+      for (let i = 0; i < count; i++) {
+        const offset = count - 1 - i;
+        timeLabels.push(offset === 0 ? 'Now' : `-${offset}s`);
+      }
 
       speedChart.update('none');
       socSohChart.update('none');
     }
 
-    // ================= Data Loading & WebSocket =================
-    async function loadHistory() {
+
+    // ================= Relay E-Stop / Reset Control =================
+    async function handleRelayAction() {
+      const action = currentRelayState === 1 ? 'trip' : 'reset';
+      const confirmPrompt = action === 'trip' 
+        ? "Engage Emergency Stop? This will trip the relay and cut motor power."
+        : "Reset relay and restore power to motors?";
+
+      if (!confirm(confirmPrompt)) return;
+
       try {
-        const resp = await fetch('/api/history?limit=40');
-        if (resp.ok) {
-          const history = await resp.json();
-          if (Array.isArray(history) && history.length > 0) {
-            history.forEach(pt => {
-              const timeStr = new Date(pt.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-              timeLabels.push(timeStr);
-              speedData.push(pt.speed);
-              socData.push(pt.soc);
-              sohData.push(pt.soh);
-            });
-            speedChart.update();
-            socSohChart.update();
-            updateTelemetry(history[history.length - 1]);
-          }
+        const resp = await fetch(`/api/control/relay?action=${action}`, {
+          method: 'POST',
+          headers: { 'X-Api-Key': 'local-dev' }
+        });
+        const res = await resp.json();
+        if (res.success) {
+          fetchLatest();
+          fetchFaults();
+        } else {
+          alert("Relay control failed: " + (res.detail || "Unauthorized"));
         }
       } catch (err) {
-        console.warn("History pre-load warning:", err);
+        console.error("Relay control error:", err);
       }
     }
 
+    // ================= History & Time Range Filter =================
+    async function setChartRange(rangeSec, btnElem) {
+      activeTimeRange = rangeSec;
+      document.querySelectorAll('.btn-pill').forEach(b => b.classList.remove('active'));
+      if (btnElem) btnElem.classList.add('active');
+
+      try {
+        const url = rangeSec === 40 ? '/api/history?limit=40' : `/api/history?limit=100&time_range=${rangeSec}`;
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const items = await resp.json();
+          timeLabels.length = 0;
+          speedData.length = 0;
+          socData.length = 0;
+          sohData.length = 0;
+
+          items.forEach(pt => {
+            const timeStr = new Date(pt.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            timeLabels.push(timeStr);
+            speedData.push(pt.speed);
+            socData.push(pt.soc);
+            sohData.push(pt.soh);
+          });
+
+          speedChart.update();
+          socSohChart.update();
+        }
+      } catch (e) {
+        console.warn("Failed to load historical window:", e);
+      }
+    }
+
+    // ================= Fault Audit Log Loader =================
+    async function fetchFaults() {
+      try {
+        const resp = await fetch('/api/faults?limit=10');
+        if (resp.ok) {
+          const faults = await resp.json();
+          const tbody = document.getElementById('faultTableBody');
+          if (!faults || faults.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--muted);">No fault alarms recorded. System operating safely.</td></tr>';
+            return;
+          }
+
+          tbody.innerHTML = faults.map(f => `
+            <tr>
+              <td>${new Date(f.timestamp * 1000).toLocaleTimeString()}</td>
+              <td style="font-weight: 600;">${f.fault_type}</td>
+              <td><span class="${f.severity === 'CRITICAL' ? 'badge-critical' : 'badge-warning'}">${f.severity}</span></td>
+              <td>${f.value}</td>
+              <td style="color: var(--muted);">${f.threshold}</td>
+              <td>${f.message}</td>
+            </tr>
+          `).join('');
+        }
+      } catch (err) {
+        console.warn("Failed to fetch fault logs:", err);
+      }
+    }
+
+    async function fetchLatest() {
+      try {
+        const resp = await fetch('/api/latest');
+        if (resp.ok) {
+          const data = await resp.json();
+          updateDashboard(data);
+        }
+      } catch (e) {
+        console.warn("Fetch latest error:", e);
+      }
+    }
+
+    // ================= WebSocket Connection =================
     let ws = null;
     let reconnectAttempts = 0;
 
     function connectWebSocket() {
       const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
       const wsUrl = `${proto}${location.host}/ws`;
-
       ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         reconnectAttempts = 0;
-        statusBadge.className = 'badge badge-status';
-        statusText.textContent = 'ONLINE';
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          updateTelemetry(data);
-          appendChartPoint(data);
+          updateDashboard(data);
+          pushChartPoint(data);
         } catch (e) {
-          console.error("Malformed packet JSON:", e);
+          console.error("WebSocket JSON parse error:", e);
         }
       };
 
       ws.onclose = () => {
-        statusBadge.className = 'badge badge-outline';
-        statusText.textContent = 'RECONNECTING';
+        sourceBadge.style.background = 'var(--destructive-bg)';
+        sourceBadge.style.borderColor = 'var(--destructive-border)';
+        sourceBadge.style.color = 'var(--destructive-text)';
+        sourceText.textContent = 'DISCONNECTED';
+        sourceDot.className = 'status-dot';
 
-        const delay = Math.min(4000, 1000 * Math.pow(1.5, reconnectAttempts++));
+        const delay = Math.min(4000, 1000 * Math.pow(1.4, reconnectAttempts++));
         setTimeout(connectWebSocket, delay);
       };
 
-      ws.onerror = () => {
-        ws.close();
-      };
+      ws.onerror = () => ws.close();
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-      loadHistory();
+      setChartRange(40);
+      fetchFaults();
       connectWebSocket();
+      setInterval(fetchFaults, 8000); // Poll fault logs periodically
     });
   </script>
 </body>

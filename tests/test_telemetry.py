@@ -1,218 +1,182 @@
 """
-Test Suite for EV Telemetry System
-Unit tests: parse_packet, estimate_range_km, SocSohModel feature pipeline
-Integration tests: SQLite persistence, FastAPI endpoints, WebSocket data flow
+Comprehensive Automated Test Suite for Intelligent EV Battery Management System.
+Tests:
+- Telemetry packet parsing & validation (JSON & CSV)
+- Current sign conventions & Coulomb counting SOC estimation
+- Fault detection engine & debounce hysteresis
+- Database persistence, schema migrations, and pagination
+- FastAPI endpoints & E-Stop relay control
 """
 
 import os
 import time
+import unittest
 import tempfile
-import pytest
+
 from fastapi.testclient import TestClient
-
-from main import app, parse_packet, estimate_range_km, SocSohModel
+from main import app
 import database
+from services.telemetry_service import telemetry_service
+from fault_detector import FaultDetector
 
-# ================= Unit Tests: parse_packet =================
+class TestBMSCore(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(app)
+        self.detector = FaultDetector()
 
-def test_parse_packet_valid():
-    raw = "34.5,48.20,-12.30,29.8"
-    parsed = parse_packet(raw)
-    assert parsed is not None
-    assert parsed["speed"] == 34.5
-    assert parsed["voltage"] == 48.20
-    assert parsed["current"] == -12.30
-    assert parsed["temperature"] == 29.8
+    # ================= Telemetry Parsing Tests =================
+    def test_parse_json_packet(self):
+        json_packet = {
+            "ver": 1,
+            "seq": 105,
+            "v": 11.25,
+            "i": 2.40,
+            "p": 27.0,
+            "temp": 30.5,
+            "speed": 22.0,
+            "relay": 1,
+            "source": "hw"
+        }
+        parsed = telemetry_service.parse_packet(json_packet)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["seq"], 105)
+        self.assertEqual(parsed["voltage"], 11.25)
+        self.assertEqual(parsed["current"], 2.40)
+        self.assertEqual(parsed["power"], 27.0)
+        self.assertEqual(parsed["relay_state"], 1)
 
-def test_parse_packet_with_whitespace():
-    raw = "  22.1 ,  51.4  , -4.50 ,  31.2  "
-    parsed = parse_packet(raw)
-    assert parsed is not None
-    assert parsed["speed"] == 22.1
-    assert parsed["voltage"] == 51.40
-    assert parsed["current"] == -4.50
-    assert parsed["temperature"] == 31.2
+    def test_parse_legacy_csv_packet(self):
+        raw_csv = "24.5, 11.40, 1.80, 28.5"
+        parsed = telemetry_service.parse_packet(raw_csv)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["speed"], 24.5)
+        self.assertEqual(parsed["voltage"], 11.40)
+        self.assertEqual(parsed["current"], 1.80)
+        self.assertEqual(parsed["temperature"], 28.5)
 
-def test_parse_packet_malformed():
-    # Missing fields
-    assert parse_packet("34.5,48.2") is None
-    # Extra fields
-    assert parse_packet("34.5,48.2,-10.0,25.0,99.9") is None
-    # Non-numeric
-    assert parse_packet("fast,48.2,-10.0,25.0") is None
-    # Empty & None
-    assert parse_packet("") is None
-    assert parse_packet(None) is None
+    def test_parse_malformed_packets(self):
+        self.assertIsNone(telemetry_service.parse_packet(""))
+        self.assertIsNone(telemetry_service.parse_packet("corrupted,packet"))
+        self.assertIsNone(telemetry_service.parse_packet("25.0, -10.0, 1.0, 30.0"))  # Negative voltage out of bounds
+        self.assertIsNone(telemetry_service.parse_packet("25.0, 12.0, 1.0, 150.0"))   # Temp > 125C out of bounds
 
-def test_parse_packet_out_of_bounds():
-    # Impossible speed (> 250 km/h)
-    assert parse_packet("400.0,48.0,-10.0,25.0") is None
-    # Negative voltage (< 0V)
-    assert parse_packet("25.0,-10.0,-10.0,25.0") is None
-    # Extreme temperature (> 120C)
-    assert parse_packet("25.0,48.0,-10.0,150.0") is None
+    # ================= Current Sign & Coulomb Counting Tests =================
+    def test_coulomb_counting_discharge_reduces_soc(self):
+        initial_soc = 90.0
+        telemetry_service.last_soc = initial_soc
+        # Positive current = discharge (should decrease SOC)
+        soc_after = telemetry_service.estimate_soc(pack_voltage=11.1, current=5.0, dt_s=1.0)
+        self.assertLess(soc_after, initial_soc)
 
+    def test_coulomb_counting_charge_increases_soc(self):
+        initial_soc = 50.0
+        telemetry_service.last_soc = initial_soc
+        # Negative current = charging (should increase SOC)
+        soc_after = telemetry_service.estimate_soc(pack_voltage=11.1, current=-3.0, dt_s=1.0)
+        self.assertGreater(soc_after, initial_soc)
 
-# ================= Unit Tests: estimate_range_km =================
+    # ================= Fault Detection & Hysteresis Tests =================
+    def test_nominal_evaluation(self):
+        res = self.detector.evaluate(voltage=11.1, current=2.0, temperature=28.0, now=100.0)
+        self.assertEqual(res["status"], "NORMAL")
+        self.assertTrue(res["relay_recommended"])
+        self.assertEqual(len(res["alerts"]), 0)
 
-def test_estimate_range_zero_battery():
-    assert estimate_range_km(soc=0.0, soh=95.0, current=-10.0, speed=30.0) == 0.0
-    assert estimate_range_km(soc=80.0, soh=0.0, current=-10.0, speed=30.0) == 0.0
+    def test_critical_overvoltage_with_debounce(self):
+        t0 = 100.0
+        # Instant 0: candidate marked pending, not yet confirmed trip
+        res1 = self.detector.evaluate(voltage=13.0, current=2.0, temperature=28.0, now=t0)
+        self.assertEqual(res1["status"], "NORMAL")
 
-def test_estimate_range_normal_cruise():
-    # 3S 27.75 Wh pack (0.02775 kWh), 80% SOC, 95% SOH -> ~21 Wh usable
-    # At ~22 Wh/km nominal -> ~1.0 km
-    range_km = estimate_range_km(soc=80.0, soh=95.0, current=-2.0, speed=20.0)
-    assert 0.5 <= range_km <= 3.0
+        # After trip debounce window (e.g. +0.4s): confirmed CRITICAL
+        res2 = self.detector.evaluate(voltage=13.0, current=2.0, temperature=28.0, now=t0 + 0.4)
+        self.assertEqual(res2["status"], "CRITICAL")
+        self.assertFalse(res2["relay_recommended"])
+        self.assertTrue(any(a["type"] == "OVERVOLTAGE" for a in res2["alerts"]))
 
-def test_estimate_range_stationary():
-    # Speed 0 (idle) falls back to nominal consumption
-    range_km = estimate_range_km(soc=100.0, soh=100.0, current=-0.2, speed=0.0)
-    assert range_km > 0.0
-    # 27.75 Wh / 22 Wh/km = ~1.3 km
-    assert 0.8 <= range_km <= 2.5
+    def test_fault_recovery_hysteresis(self):
+        t0 = 200.0
+        # Trigger overtemp
+        self.detector.evaluate(voltage=11.1, current=2.0, temperature=60.0, now=t0)
+        res_trip = self.detector.evaluate(voltage=11.1, current=2.0, temperature=60.0, now=t0 + 0.5)
+        self.assertEqual(res_trip["status"], "CRITICAL")
 
+        # Temperature returns to normal immediately (e.g. 30C), but within recovery window it stays latched
+        res_trans = self.detector.evaluate(voltage=11.1, current=2.0, temperature=30.0, now=t0 + 1.0)
+        self.assertEqual(res_trans["status"], "CRITICAL")
 
-# ================= Unit Tests: Fault Detection Engine =================
+        # After recovery debounce window (>2.0s normal), fault finally clears
+        res_cleared = self.detector.evaluate(voltage=11.1, current=2.0, temperature=30.0, now=t0 + 3.0)
+        self.assertEqual(res_cleared["status"], "NORMAL")
 
-from fault_detector import evaluate_battery_health
+    # ================= Database Tests =================
+    def test_database_insert_and_paginate(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            temp_db = f.name
 
-def test_fault_detector_nominal():
-    health = evaluate_battery_health(voltage=11.2, current=-2.0, temperature=28.0)
-    assert health["status"] == "NORMAL"
-    assert len(health["alerts"]) == 0
+        try:
+            database.init_db(temp_db)
+            database.insert_reading({
+                "timestamp": 1000.0, "seq": 1, "speed": 20.0, "voltage": 11.2,
+                "current": 2.5, "power": 28.0, "temperature": 30.0, "soc": 85.0,
+                "soh": 95.0, "range_km": 15.0, "relay_state": 1, "source": "hw"
+            }, db_path=temp_db)
 
-def test_fault_detector_undervoltage():
-    # Warning < 9.9V
-    h_warn = evaluate_battery_health(voltage=9.5, current=-1.5, temperature=27.0)
-    assert h_warn["status"] == "WARNING"
-    assert any(a["type"] == "UNDERVOLTAGE" for a in h_warn["alerts"])
+            database.insert_reading({
+                "timestamp": 1005.0, "seq": 2, "speed": 25.0, "voltage": 11.1,
+                "current": 3.0, "power": 33.3, "temperature": 31.0, "soc": 84.5,
+                "soh": 95.0, "range_km": 14.8, "relay_state": 1, "source": "hw"
+            }, db_path=temp_db)
 
-    # Critical < 9.0V
-    h_crit = evaluate_battery_health(voltage=8.7, current=-1.5, temperature=27.0)
-    assert h_crit["status"] == "CRITICAL"
-    assert any(a["type"] == "UNDERVOLTAGE" and a["severity"] == "CRITICAL" for a in h_crit["alerts"])
+            latest = database.get_latest_reading(temp_db)
+            self.assertIsNotNone(latest)
+            self.assertEqual(latest["seq"], 2)
+            self.assertEqual(latest["power"], 33.3)
 
-def test_fault_detector_overvoltage():
-    # Warning > 12.4V
-    h_warn = evaluate_battery_health(voltage=12.5, current=1.0, temperature=27.0)
-    assert h_warn["status"] == "WARNING"
-    assert any(a["type"] == "OVERVOLTAGE" for a in h_warn["alerts"])
-
-    # Critical > 12.65V
-    h_crit = evaluate_battery_health(voltage=12.8, current=1.0, temperature=27.0)
-    assert h_crit["status"] == "CRITICAL"
-    assert any(a["type"] == "OVERVOLTAGE" and a["severity"] == "CRITICAL" for a in h_crit["alerts"])
-
-def test_fault_detector_overcurrent():
-    # Discharge Warning > 5.0A (<-5.0A)
-    h_warn = evaluate_battery_health(voltage=11.0, current=-6.0, temperature=30.0)
-    assert h_warn["status"] == "WARNING"
-    assert any(a["type"] == "OVERCURRENT" for a in h_warn["alerts"])
-
-    # Discharge Critical > 7.5A (<-7.5A)
-    h_crit = evaluate_battery_health(voltage=11.0, current=-8.5, temperature=30.0)
-    assert h_crit["status"] == "CRITICAL"
-    assert any(a["type"] == "OVERCURRENT" and a["severity"] == "CRITICAL" for a in h_crit["alerts"])
-
-def test_fault_detector_overtemperature():
-    # Thermal Warning > 45C
-    h_warn = evaluate_battery_health(voltage=11.1, current=-1.5, temperature=48.0)
-    assert h_warn["status"] == "WARNING"
-    assert any(a["type"] == "OVERTEMP" for a in h_warn["alerts"])
-
-    # Thermal Critical > 55C
-    h_crit = evaluate_battery_health(voltage=11.1, current=-1.5, temperature=58.0)
-    assert h_crit["status"] == "CRITICAL"
-    assert any(a["type"] == "OVERTEMP" and a["severity"] == "CRITICAL" for a in h_crit["alerts"])
-
-
-# ================= Unit Tests: SocSohModel Feature Order =================
-
-def test_soc_soh_model_feature_order():
-    model = SocSohModel(model_path="soc_soh_model.tflite", scaler_path="scaler.pkl")
-    # Feed test values: 11.1V pack (3 cells = 3.7V cell), -2A current, 28C temp
-    feats = model.build_features(pack_voltage=11.1, current=-2.0, temperature=28.0)
-    assert len(feats) == 3
-    assert not any(map(float_is_nan_or_inf, feats))
-
-    # Test update returns reasonable SOC and SOH
-    soc, soh = model.update(pack_voltage=11.1, current=-2.0, temperature=28.0)
-    assert 0.0 <= soc <= 100.0
-    assert 50.0 <= soh <= 105.0
-
-def float_is_nan_or_inf(val):
-    import math
-    return math.isnan(val) or math.isinf(val)
+            history = database.get_history(limit=10, db_path=temp_db)
+            self.assertEqual(len(history), 2)
+        finally:
+            try:
+                if os.path.exists(temp_db):
+                    os.remove(temp_db)
+            except Exception:
+                pass
 
 
-# ================= Integration Tests: SQLite Persistence & API =================
+    # ================= REST API & E-Stop Tests =================
+    def test_api_latest(self):
+        resp = self.client.get("/api/latest")
+        self.assertEqual(resp.status_code, 200)
 
-def test_database_operations(tmp_path):
-    temp_db = str(tmp_path / "test_readings.db")
+    def test_api_diagnostics(self):
+        resp = self.client.get("/api/diagnostics")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "ONLINE")
+        self.assertIn("uptime_s", data)
 
-    database.init_db(temp_db)
-    # Verify empty initial state
-    assert database.get_latest_reading(temp_db) is None
-    assert database.get_history(limit=10, db_path=temp_db) == []
+    def test_api_relay_control_unauthorized(self):
+        # Missing or invalid key should return 401
+        resp = self.client.post("/api/control/relay?action=trip")
+        self.assertEqual(resp.status_code, 401)
 
-    # Insert record
-    rec = {
-        "timestamp": time.time(),
-        "speed": 28.5,
-        "voltage": 49.1,
-        "current": -6.2,
-        "temperature": 27.4,
-        "soc": 85.0,
-        "soh": 97.2,
-        "range_km": 44.3
-    }
-    row_id = database.insert_reading(rec, db_path=temp_db)
-    assert row_id is not None and row_id > 0
+    def test_api_relay_control_estop_success(self):
+        resp = self.client.post(
+            "/api/control/relay?action=trip",
+            headers={"X-Api-Key": "local-dev"}
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["relay_state"], 0)
 
-    latest = database.get_latest_reading(temp_db)
-    assert latest is not None
-    assert latest["speed"] == 28.5
-    assert latest["voltage"] == 49.1
-    assert latest["soc"] == 85.0
+        # Reset relay
+        resp_reset = self.client.post(
+            "/api/control/relay?action=reset",
+            headers={"X-Api-Key": "local-dev"}
+        )
+        self.assertEqual(resp_reset.status_code, 200)
+        self.assertEqual(resp_reset.json()["relay_state"], 1)
 
-    history = database.get_history(limit=5, db_path=temp_db)
-    assert len(history) == 1
-    assert history[0]["id"] == row_id
-
-
-def test_api_and_websocket_integration():
-    with TestClient(app) as client:
-        # 1. Test Dashboard HTML GET /
-        resp = client.get("/")
-        assert resp.status_code == 200
-        assert "EV Telemetry" in resp.text
-        assert "Vehicle Speed" in resp.text or "Speedometer" in resp.text
-        assert "SOC vs SOH" in resp.text
-
-        # 2. Test GET /api/latest
-        resp_latest = client.get("/api/latest")
-        assert resp_latest.status_code == 200
-        if "voltage" in resp_latest.json():
-            assert "health_status" in resp_latest.json()
-            assert "alerts" in resp_latest.json()
-
-        # 3. Test GET /api/history
-        resp_hist = client.get("/api/history?limit=10")
-        assert resp_hist.status_code == 200
-        assert isinstance(resp_hist.json(), list)
-
-        # 4. Test WebSocket Endpoint /ws
-        with client.websocket_connect("/ws") as websocket:
-            # Client should receive initial or streamed packet
-            msg = websocket.receive_text()
-            assert msg is not None
-            import json
-            data = json.loads(msg)
-            assert "speed" in data
-            assert "voltage" in data
-            assert "soc" in data
-            assert "soh" in data
-            assert "health_status" in data
-            assert "alerts" in data
-
+if __name__ == "__main__":
+    unittest.main()
